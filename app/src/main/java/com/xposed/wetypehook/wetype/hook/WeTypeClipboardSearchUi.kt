@@ -60,6 +60,7 @@ internal object WeTypeClipboardSearchUi {
     private var searchManager: Any? = null
     private var nativeSearchRestore: (() -> Unit)? = null
     private var activeImeService: java.lang.ref.WeakReference<Any>? = null
+    private val searchButtonOwners = WeakHashMap<View, Boolean>()
 
     private fun ownsSearchBox(box: EditText): Boolean = translatorShellByUs &&
         nativeKEditRefF41?.get() === box && nativeKRefF41?.get()?.parent != null
@@ -114,12 +115,12 @@ internal object WeTypeClipboardSearchUi {
             } ?: error("Missing native candidate view getter")
             val engine = Class.forName("com.tencent.wetype.plugin.hld.model.i0", false, cl)
             val pending = engine.declaredMethods.firstOrNull {
-                (it.name == "B2" || it.name == "D2") && it.parameterTypes.size == 1 &&
+                (it.name == "B2" || it.name == "D2" || it.name == "E2") && it.parameterTypes.size == 1 &&
                     it.parameterTypes[0] == java.lang.Boolean.TYPE &&
                     CharSequence::class.java.isAssignableFrom(it.returnType)
             } ?: error("Missing native pending input getter")
             val emit = engine.declaredMethods.firstOrNull {
-                (it.name == "W1" || it.name == "Y1") && it.parameterTypes.size == 3 &&
+                (it.name == "W1" || it.name == "Y1" || it.name == "Z1") && it.parameterTypes.size == 3 &&
                     it.parameterTypes[0] == String::class.java &&
                     it.parameterTypes[1] == java.lang.Boolean.TYPE &&
                     it.parameterTypes[2] == java.lang.Boolean.TYPE &&
@@ -2802,6 +2803,14 @@ internal object WeTypeClipboardSearchUi {
                 AndroidLog.i(TAG, "search button mounted next to back_btn")
             }
             bar.findViewWithTag<View>(TAG_SEARCH_BUTTON)?.let { existing ->
+                // A view survives module hot reload, but its previous click closure does too.
+                // Rebind once per module generation so updated native contracts are actually used.
+                if (searchButtonOwners.put(existing, true) != true) {
+                    existing.setOnClickListener { view ->
+                        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        onSearchButtonClick(root)
+                    }
+                }
                 if (existing.background == null) {
                     existing.background = resolveNativeRoundBackground(backBtn, resources)
                 }

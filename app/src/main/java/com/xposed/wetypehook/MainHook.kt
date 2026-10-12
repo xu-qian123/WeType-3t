@@ -193,6 +193,7 @@ class MainHook : XposedModule() {
         }
         val resourcesClean = runOnMainThreadBlocking {
             WeTypeResourceHooks.prepareForHotReload()
+            WeTypeImeRestart.prepareForHotReload()
         }
         val mainClean = cleanupExternalState()
         WeTypeSettings.prepareForHotReload()

@@ -57,6 +57,40 @@ The first device screenshot confirmed translucency but showed deformed corners
 from cloning the host drawable; the fixed rounded-fill revision awaits device
 confirmation of shape and opacity.
 
+## October 12 regression verification
+
+The current device component adds initPopupWindow(int,int,int,int,int,boolean,boolean).
+The previous discovery rule still recognized its five/six-argument wrappers but
+missed calls directly to the new implementation. Rule version 2 accepts the
+verified seven-argument signature and invalidates earlier cached rules. A stable
+PopupWindow.showAtLocation after-hook additionally schedules appearance setup
+on every show, including popup reuse. Both popup and IME pre-draw callbacks keep
+keyboard children hidden; Android inputArea/candidatesArea IDs provide a fallback
+when private service fields cannot be read. Dismiss removes both observers and
+restores alpha. Runtime logs confirm frames=2, hiddenChildren=1, covered=true and
+sharedUnderlay=true; the dark screenshot confirms blur and no keyboard bleed.
+The user confirmed the light-mode result and normal keyboard restoration too.
+
+WeType's nine-key path uses selfdraw.c#g3(j,MotionEvent,q), distinct from the
+QWERTY selfdraw.b#d3 method. Its wrapped UP handler is discovered by the existing
+log literal; the declaring class's unique direct three-argument dispatcher is
+then hooked before it can submit input. Key IDs such as S1_key_1 are parsed by
+the final key number, not the first digit in S1. Unmapped main text (@#) can fall
+back to KeyData.id; symbol-strip IDs are rejected. The user confirmed nine-key
+downward actions work without simultaneous character input, and the screenshot
+places the first-key action label on @# instead of the symbol strip.
+
+The installed WeType version uses engine E2(boolean) for pending text and
+Z1(String,boolean,boolean) for forceEmitPendingInput. These signatures and
+implementations were inspected in the device APK before extending search
+compatibility. The search button is rebound once per module generation because
+its view and old click closure can survive hot reload. The current screenshot
+shows the searchable input box; the user confirmed search submission/results.
+
+Final validation: signed release build succeeds; all 104 JVM tests pass,
+including first-key ID fallback, rejection of symbol/function IDs and the new
+MIUI overload. No device-specific screenshots or extracted APKs are sources.
+
 The initial implementation applied the material synchronously after
 initPopupWindow. Device logs proved that isShowing was already true while
 PopupDecorView was not attached, causing "Material carrier must be attached

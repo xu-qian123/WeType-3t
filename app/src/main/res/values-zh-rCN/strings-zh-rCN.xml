@@ -19,9 +19,10 @@
     <string name="settings_save_failed">设置保存失败</string>
     <string name="settings_invalid_color">颜色格式不正确，请使用 #RRGGBB。</string>
     <string name="settings_root_required">请先授予 root 权限</string>
-    <string name="settings_restart_done">WeType 已重启</string>
-    <string name="settings_restart_failed">重启 WeType 失败</string>
-    <string name="settings_restart_inactive">模块未在输入法中生效，请检查 LSPosed 作用域后手动重启输入法</string>
+    <string name="settings_restart_done">微信输入法已重启</string>
+    <string name="settings_restart_not_running">设置已保存，下次打开微信输入法生效</string>
+    <string name="settings_restart_failed">设置已保存，请手动重启微信输入法</string>
+    <string name="settings_restart_inactive">设置已保存，请手动重启微信输入法</string>
 
     <string name="settings_section_preview">预览</string>
     <string name="settings_section_mode">颜色模式</string>

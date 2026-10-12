@@ -20,8 +20,9 @@
     <string name="settings_invalid_color">Invalid color format. Please use #RRGGBB.</string>
     <string name="settings_root_required">Root permission is required</string>
     <string name="settings_restart_done">WeType restarted</string>
+    <string name="settings_restart_not_running">Settings saved; changes apply next time WeType opens</string>
     <string name="settings_restart_failed">Failed to restart WeType</string>
-    <string name="settings_restart_inactive">Module is not active in the input method; check the LSPosed scope and restart it manually</string>
+    <string name="settings_restart_inactive">Settings saved; please restart WeType manually</string>
 
     <string name="settings_section_preview">Preview</string>
     <string name="settings_section_mode">Color mode</string>

@@ -222,8 +222,7 @@ class KeyGestureResolver(
             }
 
             // 3. 动态从 keyContext (如 selfdraw.j / KeyData) 提取 mainText / id
-            val rawText = resolveRawText(keyContext)
-            if (!rawText.isNullOrEmpty()) {
+            for (rawText in resolveRawTexts(keyContext)) {
                 val normalized = normalizeKeyText(rawText, isT9)
                 if (normalized != '\u0000') return normalized
             }
@@ -272,20 +271,21 @@ class KeyGestureResolver(
                 "pqrs" -> '7'
                 "tuv" -> '8'
                 "wxyz" -> '9'
-                else -> str.firstOrNull { it in '1'..'9' }
+                else -> resolveT9KeyNumber(str)
             }
         }
 
-        private fun resolveRawText(obj: Any): String? {
+        private fun resolveRawTexts(obj: Any): List<String> {
+            val texts = mutableListOf<String>()
             val clazz = obj.javaClass
             val accessor = accessorCache.getOrPut(clazz) { buildAccessor(clazz) }
 
             // 先尝试直接调用 mainTextMethod 或 idMethod
             accessor.mainTextMethod?.let { m ->
-                runCatching { m.invoke(obj) as? String }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it }
+                runCatching { m.invoke(obj) as? String }.getOrNull()?.takeIf { it.isNotEmpty() }?.let(texts::add)
             }
             accessor.idMethod?.let { m ->
-                runCatching { m.invoke(obj) as? String }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it }
+                runCatching { m.invoke(obj)?.toString() }.getOrNull()?.takeIf { it.isNotEmpty() }?.let(texts::add)
             }
 
             // 再尝试从 keyData 提取
@@ -294,22 +294,22 @@ class KeyGestureResolver(
                 val kdClass = keyData.javaClass
                 val kdAccessor = accessorCache.getOrPut(kdClass) { buildAccessor(kdClass) }
                 kdAccessor.mainTextMethod?.let { m ->
-                    runCatching { m.invoke(keyData) as? String }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it }
+                    runCatching { m.invoke(keyData) as? String }.getOrNull()?.takeIf { it.isNotEmpty() }?.let(texts::add)
                 }
                 kdAccessor.idMethod?.let { m ->
-                    runCatching { m.invoke(keyData) as? String }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it }
+                    runCatching { m.invoke(keyData)?.toString() }.getOrNull()?.takeIf { it.isNotEmpty() }?.let(texts::add)
                 }
             }
 
-            return null
+            return texts
         }
 
         private fun buildAccessor(clazz: Class<*>): KeyAccessor {
             var mainTextM: Method? = null
             var idM: Method? = null
             for (m in clazz.methods) {
-                if (m.parameterTypes.isEmpty() && m.returnType == String::class.java) {
-                    if (m.name == "getMainText") {
+                if (m.parameterTypes.isEmpty()) {
+                    if (m.name == "getMainText" && m.returnType == String::class.java) {
                         m.isAccessible = true
                         mainTextM = m
                     } else if (m.name == "getId") {

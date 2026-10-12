@@ -17,7 +17,7 @@ import java.security.MessageDigest
 /** Update-aware discovery: strong log evidence plus runtime contracts, never first-match. */
 internal object MiuiPhraseDiscovery {
     private const val TARGET = "com.miui.inputmethod.InputMethodClipboardPhrasePopupView"
-    private const val RULE_VERSION = 1
+    private const val RULE_VERSION = 2
     data class Target(val clazz: Class<*>, val showMethods: List<Method>, val source: String)
 
     fun resolve(loader: ClassLoader, dexPath: String?): Target? {
@@ -92,5 +92,5 @@ internal object MiuiPhraseDiscovery {
 }
 
 internal fun matchesMiuiPopupShowSignature(parameters: List<String>): Boolean =
-    (parameters.size == 5 || parameters.size == 6) && parameters.take(5).all { it == "int" } &&
-        (parameters.size == 5 || parameters.last() == "boolean")
+    parameters.size in 5..7 && parameters.take(5).all { it == "int" } &&
+        parameters.drop(5).all { it == "boolean" }

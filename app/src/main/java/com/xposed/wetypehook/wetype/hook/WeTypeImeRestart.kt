@@ -7,6 +7,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import com.xposed.wetypehook.xposed.HookEnvironment
 import com.xposed.wetypehook.xposed.Log
 import com.xposed.wetypehook.xposed.findMethod
@@ -17,12 +19,12 @@ import com.xposed.wetypehook.xposed.sameAs
  * 输入法进程定点重启（无 Root）：只在 `:hld` 输入法进程内注册（单接收器，回执唯一），
  * 与微信输入法同 uid，可直接 [android.os.Process.sendSignal]。
  *
- * 收到 [ACTION_RESTART_IME] 有序广播后杀掉自身进程（即 `:hld`），主进程不动，
+ * 收到 [ACTION_RESTART_IME] 后先回执，延迟杀掉自身进程（即 `:hld`），主进程不动，
  * 系统会自动重新拉起输入法服务。
  *
  * 触发方（模块 App / 宿主寄生页）发显式广播并等回执：
- * resultCode OK = 已下发 kill；CANCELED + 空 resultData = 本模块未在输入法中生效；
- * CANCELED + 非空 resultData = 已收到但无目标可杀。
+ * resultCode OK + scheduled = 已安排重启；CANCELED + 非空 resultData = 明确拒绝或无目标。
+ * 未收到回执的请求由调用方作为无法确认处理。
  */
 internal object WeTypeImeRestart {
 
@@ -37,6 +39,7 @@ internal object WeTypeImeRestart {
 
     @Volatile
     private var receiverRegistered = false
+    private var registeredContext: Context? = null
 
     fun install() {
         if (installed) return
@@ -48,6 +51,11 @@ internal object WeTypeImeRestart {
                 val context = param.args[0] as? Context ?: return@hookAfter
                 registerRestartReceiver(context.applicationContext ?: context)
             }
+            // Hot reload does not replay Application.attach in an already-running IME.
+            runCatching {
+                Class.forName("android.app.ActivityThread").getDeclaredMethod("currentApplication")
+                    .invoke(null) as? Context
+            }.getOrNull()?.let(::registerRestartReceiver)
             Log.i("WeType IME restart receiver installation armed")
         }.onFailure {
             installed = false
@@ -76,11 +84,19 @@ internal object WeTypeImeRestart {
                 @Suppress("DEPRECATION")
                 appContext.registerReceiver(restartReceiver, filter)
             }
+            registeredContext = appContext
             Log.i("WeType IME restart receiver registered in ${appContext.packageName}")
         }.onFailure {
             receiverRegistered = false
             Log.e("WeType IME restart receiver register failed: $it")
         }
+    }
+
+    fun prepareForHotReload() {
+        registeredContext?.let { context -> runCatching { context.unregisterReceiver(restartReceiver) } }
+        registeredContext = null
+        receiverRegistered = false
+        installed = false
     }
 
     private val restartReceiver = object : BroadcastReceiver() {
@@ -92,14 +108,14 @@ internal object WeTypeImeRestart {
                 }.getOrNull().orEmpty()
                 if (MODULE_PACKAGE !in senderPackages && WETYPE_PACKAGE !in senderPackages) {
                     Log.e("WeType IME restart rejected for ${senderPackages.contentToString()}")
-                    setResultCode(Activity.RESULT_CANCELED)
+                    setResult(Activity.RESULT_CANCELED, "rejected", null)
                     return
                 }
             }
             val killed = killImeProcess(context)
             if (killed) {
                 Log.i("WeType IME restart: kill signal sent to $IME_PROCESS_NAME")
-                setResult(Activity.RESULT_OK, "killed", null)
+                setResult(Activity.RESULT_OK, "scheduled", null)
             } else {
                 Log.e("WeType IME restart: no $IME_PROCESS_NAME target found")
                 setResult(Activity.RESULT_CANCELED, "no-target", null)
@@ -118,7 +134,11 @@ internal object WeTypeImeRestart {
         var killed = false
         targets.forEach { pid ->
             runCatching {
-                android.os.Process.sendSignal(pid, android.os.Process.SIGNAL_KILL)
+                // Finish the ordered broadcast before killing its own receiver process.
+                Handler(Looper.getMainLooper()).postDelayed({
+                    runCatching { android.os.Process.sendSignal(pid, android.os.Process.SIGNAL_KILL) }
+                        .onFailure { Log.e("WeType IME restart: delayed signal failed: $it") }
+                }, 500L)
                 killed = true
             }.onFailure {
                 Log.e("WeType IME restart: sendSignal($pid) failed: $it")

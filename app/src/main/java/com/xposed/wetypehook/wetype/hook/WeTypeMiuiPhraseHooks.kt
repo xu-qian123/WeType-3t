@@ -33,6 +33,9 @@ internal object WeTypeMiuiPhraseHooks {
         var observer: ViewTreeObserver? = null
         var listener: ViewTreeObserver.OnGlobalLayoutListener? = null
         var preDrawListener: ViewTreeObserver.OnPreDrawListener? = null
+        var imeObserver: ViewTreeObserver? = null
+        var imePreDrawListener: ViewTreeObserver.OnPreDrawListener? = null
+        var loggedFrames = false
         var dark = false
         val textColors = WeakHashMap<android.widget.TextView, ColorStateList>()
         val iconColors = WeakHashMap<android.widget.ImageView, ColorStateList?>()
@@ -64,6 +67,16 @@ internal object WeTypeMiuiPhraseHooks {
                         prepared[popup] = inside to inside.background
                         replaceBackground(inside, ColorDrawable(Color.TRANSPARENT))
                     }
+                }
+            }
+            // MIUI reuses the popup and can reopen it without running initPopupWindow again.
+            // Every successful show must reattach optics and keyboard hiding after dismissal cleanup.
+            PopupWindow::class.java.getDeclaredMethod("showAtLocation", View::class.java,
+                Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType).hookAfter { param ->
+                val popup = param.thisObject as? PopupWindow ?: return@hookAfter
+                if (clazz.isInstance(popup) && WeTypeSettings.readSnapshotXposed().miuiClipboardGlass) {
+                    android.util.Log.i("WeTypeMiuiGlass", "popup shown; scheduling appearance session")
+                    scheduleApply(popup)
                 }
             }
             check(init.isNotEmpty()) { "MIUI initPopupWindow not found" }
@@ -160,12 +173,23 @@ internal object WeTypeMiuiPhraseHooks {
             // RecyclerView may bind cards after global layout. Style them before that frame draws.
             val preDraw = ViewTreeObserver.OnPreDrawListener {
                 if (popupRef.get()?.let { sessions[it] === state && it.isShowing } == true) {
+                    hideKeyboard(state, serviceRef.get())
                     updateContentColors(state)
                 }
                 true
             }
             state.preDrawListener = preDraw
             state.observer?.addOnPreDrawListener(preDraw)
+            val imePreDraw = ViewTreeObserver.OnPreDrawListener {
+                if (popupRef.get()?.let { sessions[it] === state && it.isShowing } == true) {
+                    hideKeyboard(state, serviceRef.get())
+                }
+                true
+            }
+            state.imePreDrawListener = imePreDraw
+            state.imeObserver = service.window?.window?.decorView?.viewTreeObserver?.also {
+                it.addOnPreDrawListener(imePreDraw)
+            }
             hideKeyboard(state, service)
             updateGeometry(state)
             updateContentColors(state)
@@ -222,13 +246,22 @@ internal object WeTypeMiuiPhraseHooks {
         if (service == null) return
         // Hide children, not mInputFrame itself: its dimensions keep IME insets stable.
         // The module's glass carrier is a decor sibling and must remain visible.
-        for (name in listOf("mInputFrame", "mCandidatesFrame")) {
-            val frame = fieldValue(service, name) as? ViewGroup ?: continue
+        val decor = service.window?.window?.decorView
+        var frames = 0
+        for ((name, resource) in listOf("mInputFrame" to "inputArea", "mCandidatesFrame" to "candidatesArea")) {
+            val frame = (fieldValue(service, name) as? ViewGroup)
+                ?: decor?.findViewById<ViewGroup>(service.resources.getIdentifier(resource, "id", "android"))
+                ?: continue
+            frames++
             for (index in 0 until frame.childCount) {
                 val child = frame.getChildAt(index)
                 if (!state.hidden.containsKey(child)) state.hidden[child] = child.alpha
                 if (child.alpha != 0f) child.alpha = 0f
             }
+        }
+        if (!state.loggedFrames) {
+            state.loggedFrames = true
+            android.util.Log.i("WeTypeMiuiGlass", "IME frames=$frames hiddenChildren=${state.hidden.size}")
         }
     }
 
@@ -245,6 +278,9 @@ internal object WeTypeMiuiPhraseHooks {
         }
         state.preDrawListener?.let { listener ->
             state.observer?.takeIf { it.isAlive }?.removeOnPreDrawListener(listener)
+        }
+        state.imePreDrawListener?.let { listener ->
+            state.imeObserver?.takeIf { it.isAlive }?.removeOnPreDrawListener(listener)
         }
         state.material?.clear()
         state.carrier?.let { (it.parent as? ViewGroup)?.removeView(it) }

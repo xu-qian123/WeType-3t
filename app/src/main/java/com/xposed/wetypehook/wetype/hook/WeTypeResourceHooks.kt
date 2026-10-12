@@ -872,6 +872,20 @@ internal object WeTypeResourceHooks {
     }
 
     fun hookCandidatePinyinLeftMargin() {
+        // Verified in WeType 4.0: t() selects all-scene preedit, u(int) selects search/go preedit.
+        // Leave native decisions intact unless the user explicitly chooses the candidate-bar mode.
+        loadClassOrNull("com.tencent.wetype.plugin.hld.pendinginput.a")?.let { pendingClass ->
+            for (parameters in listOf(emptyArray<Class<*>>(), arrayOf<Class<*>>(Int::class.javaPrimitiveType!!))) {
+                val name = if (parameters.isEmpty()) "t" else "u"
+                runCatching {
+                    pendingClass.getDeclaredMethod(name, *parameters).takeIf {
+                        it.returnType == Boolean::class.javaPrimitiveType && !Modifier.isStatic(it.modifiers)
+                    }?.hookAfter { param ->
+                        if (WeTypeSettings.readSnapshotXposed().candidatePinyinInBar) param.result = false
+                    }
+                }.onFailure { Log.i("Candidate-bar preedit mode unavailable: ${it.message}") }
+            }
+        }
         runCatching {
             val candidateViewClass = loadClassOrNull(CANDIDATE_VIEW_CLASS)
                 ?: error("Failed to load ImeCandidateView")

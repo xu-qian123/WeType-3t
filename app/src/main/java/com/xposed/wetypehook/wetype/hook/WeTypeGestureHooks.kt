@@ -79,11 +79,23 @@ internal object WeTypeGestureHooks {
             usingString = "onTouch move2 lastKeyOperation is null",
             filterReturnBoolean = true
         )
-        val t9Method = findTouchMethod(
-            bridge, classLoader,
-            usingString = "onTouch up isUpperSlidedCancelState true",
-            filterReturnBoolean = false
-        )
+        // T9's UP handler wraps the event in c$a; its owner has a separate direct dispatcher.
+        // Searching only methods with MotionEvent misses that owner and hooks QWERTY twice.
+        val t9Method = runCatching {
+            val up = bridge.findMethod {
+                searchPackages("com.tencent.wetype.plugin.hld.keyboard")
+                matcher { usingStrings("onTouch up isUpperSlidedCancelState true"); returnType = "boolean" }
+            }.map { it.getMethodInstance(classLoader) }.singleOrNull {
+                it.parameterTypes.size == 1 && it.parameterTypes.none { type -> type == MotionEvent::class.java }
+            } ?: return@runCatching null
+            up.declaringClass.declaredMethods.singleOrNull {
+                it.returnType == Boolean::class.javaPrimitiveType &&
+                    it.parameterTypes.size == 3 &&
+                    it.parameterTypes[1] == MotionEvent::class.java &&
+                    it.parameterTypes[0].name.contains("keyboard.selfdraw") &&
+                    !Modifier.isStatic(it.modifiers)
+            }?.apply { isAccessible = true }
+        }.getOrNull()
         if (qwertyMethod == null) Log.e("[$TAG] Failed to locate QWERTY touch method")
         if (t9Method == null) Log.e("[$TAG] Failed to locate T9 touch method")
 
@@ -123,8 +135,8 @@ internal object WeTypeGestureHooks {
                                 val cancelArgs = param.args.toMutableList()
                                 val evIndex = cancelArgs.indexOfFirst { it is MotionEvent }
                                 if (evIndex >= 0) cancelArgs[evIndex] = cancelEvent
-                                method.invoke(param.thisObject, *cancelArgs.toTypedArray())
-                                cancelEvent.recycle()
+                                try { method.invoke(param.thisObject, *cancelArgs.toTypedArray()) }
+                                finally { cancelEvent.recycle() }
                             } finally {
                                 isDispatchingCancel = false
                             }

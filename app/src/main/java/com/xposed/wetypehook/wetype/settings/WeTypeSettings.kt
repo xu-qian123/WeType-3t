@@ -48,6 +48,7 @@ object WeTypeSettings {
     private const val KEY_CANDIDATE_BACKGROUND_CORNER = "candidate_background_corner"
     private const val KEY_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP =
         "candidate_background_left_margin_dp"
+    private const val KEY_CANDIDATE_PINYIN_IN_BAR = "candidate_pinyin_in_bar"
     private const val KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP = "candidate_pinyin_left_margin_dp"
     private const val KEY_APPEARANCE_COLOR_PREFIX = "appearance_color_"
     private const val KEY_DISABLE_HOT_UPDATE = "disable_hot_update"
@@ -370,6 +371,7 @@ object WeTypeSettings {
         val candidateBackgroundCorner: Float,
         val candidateBackgroundLeftMarginDp: Int,
         val candidatePinyinLeftMarginDp: Int,
+        val candidatePinyinInBar: Boolean = false,
         val appearanceColors: Map<String, Int>,
         val toolbarIconBgOpacity: Int,
         val disableHotUpdate: Boolean,
@@ -782,6 +784,7 @@ object WeTypeSettings {
         candidateBackgroundCorner: Float,
         candidateBackgroundLeftMarginDp: Int,
         candidatePinyinLeftMarginDp: Int,
+        candidatePinyinInBar: Boolean = false,
         toolbarIconBgOpacity: Int,
         appearanceColors: Map<String, Int>,
         disableHotUpdate: Boolean = DEFAULT_DISABLE_HOT_UPDATE,
@@ -844,6 +847,7 @@ object WeTypeSettings {
             candidateBackgroundCorner = candidateBackgroundCorner,
             candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp,
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp,
+            candidatePinyinInBar = candidatePinyinInBar,
             toolbarIconBgOpacity = toolbarIconBgOpacity,
             appearanceColors = sanitizedAppearanceColors,
             disableHotUpdate = disableHotUpdate,
@@ -925,6 +929,7 @@ object WeTypeSettings {
             candidateBackgroundCorner = current.candidateBackgroundCorner,
             candidateBackgroundLeftMarginDp = current.candidateBackgroundLeftMarginDp,
             candidatePinyinLeftMarginDp = current.candidatePinyinLeftMarginDp,
+            candidatePinyinInBar = current.candidatePinyinInBar,
             toolbarIconBgOpacity = current.toolbarIconBgOpacity,
             appearanceColors = current.appearanceColors,
             disableHotUpdate = current.disableHotUpdate,
@@ -1130,6 +1135,7 @@ object WeTypeSettings {
         candidateBackgroundCorner: Float,
         candidateBackgroundLeftMarginDp: Int,
         candidatePinyinLeftMarginDp: Int,
+        candidatePinyinInBar: Boolean = false,
         toolbarIconBgOpacity: Int,
         appearanceColors: Map<String, Int>,
         disableHotUpdate: Boolean,
@@ -1191,6 +1197,7 @@ object WeTypeSettings {
             ),
             candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp.coerceIn(0, 64),
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp.coerceIn(0, 64),
+            candidatePinyinInBar = candidatePinyinInBar,
             toolbarIconBgOpacity = toolbarIconBgOpacity.coerceIn(0, 255),
             appearanceColors = WeTypeAppearanceColorGroups.groups.associate { group ->
                 group.id to (appearanceColors[group.id] ?: group.defaultColor)
@@ -1298,6 +1305,7 @@ object WeTypeSettings {
                 KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
                 snapshot.candidatePinyinLeftMarginDp
             )
+            .putBoolean(KEY_CANDIDATE_PINYIN_IN_BAR, snapshot.candidatePinyinInBar)
             .putInt(KEY_TOOLBAR_ICON_BG_OPACITY, snapshot.toolbarIconBgOpacity)
             .putBoolean(KEY_HYPER_MATERIAL_ENABLED, snapshot.hyperMaterialEnabled)
             .putBoolean(KEY_DISABLE_HOT_UPDATE, snapshot.disableHotUpdate)
@@ -1481,6 +1489,7 @@ object WeTypeSettings {
         putInt(KEY_CANDIDATE_BACKGROUND_ALPHA, candidateBackgroundAlpha)
         putFloat(KEY_CANDIDATE_BACKGROUND_CORNER, candidateBackgroundCorner)
         putInt(KEY_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP, candidateBackgroundLeftMarginDp)
+        putBoolean(KEY_CANDIDATE_PINYIN_IN_BAR, candidatePinyinInBar)
         putInt(KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP, candidatePinyinLeftMarginDp)
         putInt(KEY_TOOLBAR_ICON_BG_OPACITY, toolbarIconBgOpacity)
         putBoolean(KEY_DISABLE_HOT_UPDATE, disableHotUpdate)
@@ -1576,6 +1585,7 @@ object WeTypeSettings {
                 KEY_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP,
                 defaults.candidateBackgroundLeftMarginDp
             ).coerceIn(0, 64),
+            candidatePinyinInBar = getBoolean(KEY_CANDIDATE_PINYIN_IN_BAR, false),
             candidatePinyinLeftMarginDp = getInt(
                 KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
                 defaults.candidatePinyinLeftMarginDp
@@ -1711,6 +1721,7 @@ object WeTypeSettings {
                 KEY_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP,
                 DEFAULT_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP
             ).coerceIn(0, 64),
+            candidatePinyinInBar = getBoolean(KEY_CANDIDATE_PINYIN_IN_BAR, false),
             candidatePinyinLeftMarginDp = getInt(
                 KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
                 DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP
@@ -1885,6 +1896,7 @@ object WeTypeSettings {
             contains(KEY_CANDIDATE_BACKGROUND_CORNER) ||
             contains(KEY_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP) ||
             contains(KEY_CANDIDATE_PINYIN_LEFT_MARGIN_DP) ||
+            contains(KEY_CANDIDATE_PINYIN_IN_BAR) ||
             contains(KEY_TOOLBAR_ICON_BG_OPACITY) ||
             contains(KEY_DISABLE_HOT_UPDATE) ||
             contains(KEY_MIUI_CLIPBOARD_GLASS) ||

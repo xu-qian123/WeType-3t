@@ -275,6 +275,7 @@ private fun WeTypeSettingsScreen(
     var candidateBackgroundLeftMarginDp by rememberSaveable {
         mutableStateOf(snapshot.candidateBackgroundLeftMarginDp.toString())
     }
+    var candidatePinyinInBar by rememberSaveable { mutableStateOf(snapshot.candidatePinyinInBar) }
     var candidatePinyinLeftMarginDp by rememberSaveable {
         mutableStateOf(snapshot.candidatePinyinLeftMarginDp.toString())
     }
@@ -511,7 +512,8 @@ private fun WeTypeSettingsScreen(
     fun saveSettings(
         successMessage: Int = R.string.settings_saved,
         glassOverridesToSave: GlassMaterialOverrides? = parsedGlassOverrides,
-        quietOnSuccess: Boolean = false
+        quietOnSuccess: Boolean = false,
+        onPersistedResult: ((Boolean) -> Unit)? = null
     ): Boolean {
         if (glassOverridesToSave == null) {
             Toast.makeText(context, R.string.settings_glass_invalid, Toast.LENGTH_SHORT).show()
@@ -531,6 +533,7 @@ private fun WeTypeSettingsScreen(
             candidateBackgroundCorner = candidateBackgroundCorner.toFloat(),
             candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp.toIntOrNull()
                 ?: WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP,
+            candidatePinyinInBar = candidatePinyinInBar,
             candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp.toIntOrNull()
                 ?: WeTypeSettings.DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP,
             toolbarIconBgOpacity = toolbarIconBgOpacity,
@@ -577,8 +580,9 @@ private fun WeTypeSettingsScreen(
             hyperMaterialEnabled = hyperMaterialEnabled,
             glassOverrides = glassOverridesToSave,
             onPersisted = { saved ->
+                onPersistedResult?.invoke(saved)
                 // 保存按钮走自动重启，成功时只留重启结果那句 Toast，这里不再重复提示。
-                if (!saved || !quietOnSuccess) {
+                if (onPersistedResult == null && (!saved || !quietOnSuccess)) {
                     Toast.makeText(
                         context,
                         if (saved) successMessage else R.string.settings_save_failed,
@@ -602,6 +606,7 @@ private fun WeTypeSettingsScreen(
         candidateBackgroundCorner = WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_CORNER.roundToInt()
         candidateBackgroundLeftMarginDp =
             WeTypeSettings.DEFAULT_CANDIDATE_BACKGROUND_LEFT_MARGIN_DP.toString()
+        candidatePinyinInBar = false
         candidatePinyinLeftMarginDp = WeTypeSettings.DEFAULT_CANDIDATE_PINYIN_LEFT_MARGIN_DP.toString()
         toolbarIconBgOpacity = WeTypeSettings.DEFAULT_TOOLBAR_ICON_BG_OPACITY
         disableHotUpdate = WeTypeSettings.DEFAULT_DISABLE_HOT_UPDATE
@@ -752,6 +757,7 @@ private fun WeTypeSettingsScreen(
 
     val scrollBehavior = MiuixScrollBehavior(state = rememberTopAppBarState())
     val restartScope = rememberCoroutineScope()
+    var applyingSettings by remember { mutableStateOf(false) }
 
     // 底栏四 tab + 二级路由：detailRoute 非空时展示详情并隐藏 hub。
     val contentKey = detailRoute ?: when (bottomTab) {
@@ -879,20 +885,41 @@ private fun WeTypeSettingsScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         IconButton(
+                            enabled = !applyingSettings,
                             onClick = {
-                                if (saveSettings(quietOnSuccess = true)) {
-                                    restartScope.launch {
+                                if (applyingSettings) return@IconButton
+                                if (parsedGlassOverrides == null) {
+                                    saveSettings(quietOnSuccess = true)
+                                    return@IconButton
+                                }
+                                applyingSettings = true
+                                restartScope.launch {
+                                    try {
+                                        val saved = kotlinx.coroutines.suspendCancellableCoroutine<Boolean> { continuation ->
+                                            val accepted = saveSettings(quietOnSuccess = true, onPersistedResult = {
+                                                if (continuation.isActive) continuation.resume(it) {}
+                                            })
+                                            if (!accepted && continuation.isActive) continuation.resume(false) {}
+                                        }
+                                        if (!saved) {
+                                            Toast.makeText(context, R.string.settings_save_failed, Toast.LENGTH_SHORT).show()
+                                            return@launch
+                                        }
                                         val hint = when (ImeRestarter.restartWeType(context)) {
                                             ImeRestarter.Result.Restarted ->
                                                 context.getString(R.string.settings_restart_done)
 
-                                            ImeRestarter.Result.ModuleInactive ->
+                                            ImeRestarter.Result.Unconfirmed ->
                                                 context.getString(R.string.settings_restart_inactive)
 
                                             ImeRestarter.Result.Failed ->
                                                 context.getString(R.string.settings_restart_failed)
+                                            ImeRestarter.Result.NotRunning ->
+                                                context.getString(R.string.settings_restart_not_running)
                                         }
                                         Toast.makeText(context, hint, Toast.LENGTH_SHORT).show()
+                                    } finally {
+                                        applyingSettings = false
                                     }
                                 }
                             }
@@ -1030,6 +1057,8 @@ private fun WeTypeSettingsScreen(
                         darkKeyColor = keyColorValue(true),
                         candidateBackgroundLeftMarginDp = candidateBackgroundLeftMarginDp,
                         onCandidateBackgroundLeftMarginDpChange = { candidateBackgroundLeftMarginDp = it },
+                        candidatePinyinInBar = candidatePinyinInBar,
+                        onCandidatePinyinInBarChange = { candidatePinyinInBar = it },
                         candidatePinyinLeftMarginDp = candidatePinyinLeftMarginDp,
                         onCandidatePinyinLeftMarginDpChange = { candidatePinyinLeftMarginDp = it },
                         candidateBackgroundAlpha = candidateBackgroundAlpha,
@@ -1227,6 +1256,8 @@ private fun LazyListScope.AppearanceTabContent(
     darkKeyColor: Int,
     candidateBackgroundLeftMarginDp: String,
     onCandidateBackgroundLeftMarginDpChange: (String) -> Unit,
+    candidatePinyinInBar: Boolean,
+    onCandidatePinyinInBarChange: (Boolean) -> Unit,
     candidatePinyinLeftMarginDp: String,
     onCandidatePinyinLeftMarginDpChange: (String) -> Unit,
     candidateBackgroundAlpha: Int,
@@ -1500,6 +1531,19 @@ private fun LazyListScope.AppearanceTabContent(
                     }
                 )
 
+                MiuixDropdownPreference(
+                    title = "拼音显示方式",
+                    items = listOf("原生直接上屏", "候选栏拼音"),
+                    selectedIndex = if (candidatePinyinInBar) 1 else 0,
+                    onSelectedIndexChange = { onCandidatePinyinInBarChange(it == 1) }
+                )
+                Text(
+                    text = "候选栏模式将拼音显示在键盘中。保存后清空未确认输入并重新打开键盘。",
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    style = MiuixTheme.textStyles.body2,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+                if (candidatePinyinInBar) {
                 NumericTextSettingItem(
                     title = stringResource(R.string.settings_candidate_pinyin_margin_title),
                     summary = stringResource(R.string.settings_candidate_pinyin_margin_desc),
@@ -1510,6 +1554,8 @@ private fun LazyListScope.AppearanceTabContent(
                         }
                     }
                 )
+
+                }
 
                 SliderPreferenceItem(
                     title = stringResource(R.string.settings_key_color_hook_alpha_title),
