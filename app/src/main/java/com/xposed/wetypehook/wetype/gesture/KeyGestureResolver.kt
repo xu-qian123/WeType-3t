@@ -1,6 +1,5 @@
 package com.xposed.wetypehook.wetype.gesture
 
-import android.os.SystemClock
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
@@ -92,7 +91,7 @@ class KeyGestureResolver(
                 reset()
                 return false
             }
-            val bindings = WeTypeGestureSettings.parseBindings(WeTypeSettings.getGestureBindingsJsonXposed())
+            val bindings = WeTypeGestureSettings.cachedBindings(WeTypeSettings.getGestureBindingsJsonXposed())
             val action = bindings[keyChar] ?: GestureAction.None
             boundAction = action
 
@@ -210,7 +209,7 @@ class KeyGestureResolver(
             }
 
             // 2. 尝试从 keyDataMethod 反射调用 (可能直接作用于 KeyData 或 keyContext)
-            keyDataMethod?.let { method ->
+            keyDataMethod?.takeIf { it.declaringClass.isInstance(keyContext) }?.let { method ->
                 runCatching {
                     method.isAccessible = true
                     val result = method.invoke(keyContext) as? String

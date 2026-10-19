@@ -73,12 +73,6 @@ internal object WeTypeKeyLabelHooks {
     private val currentDrawFrame = ThreadLocal<DrawFrame>()
     private val loggedGeometry = ConcurrentHashMap.newKeySet<Char>()
 
-    @Volatile
-    private var cachedBindingsJson: String? = null
-
-    @Volatile
-    private var cachedBindings: Map<Char, GestureAction> = emptyMap()
-
     private var keyDataMethod: Method? = null
 
     fun install(sourceDir: String?, classLoader: ClassLoader) {
@@ -139,13 +133,14 @@ internal object WeTypeKeyLabelHooks {
     }
 
     private fun drawKeyLabel(canvasArg: Any?, drawCtx: Any?) {
+        // Most keyboards redraw on every press even when labels are disabled.
+        if (!WeTypeSettings.isShowGestureKeyLabelsXposed()) return
         val canvas = canvasArg as? Canvas ?: return
         if (drawCtx == null) return
         val access = accessFor(drawCtx) ?: return
         val keyView = runCatching { access.viewField.get(drawCtx) as? View }.getOrNull() ?: return
         val rect = runCatching { access.drawRectGetter.invoke(drawCtx) as? Rect }.getOrNull() ?: return
         if (rect.isEmpty) return
-        if (!WeTypeSettings.isShowGestureKeyLabelsXposed()) return
 
         val isT9 = isT9Key(keyView, drawCtx)
         val enabled = if (isT9) {
@@ -307,12 +302,7 @@ internal object WeTypeKeyLabelHooks {
     }
 
     private fun bindings(): Map<Char, GestureAction> {
-        val json = WeTypeSettings.getGestureBindingsJsonXposed()
-        if (json != cachedBindingsJson) {
-            cachedBindingsJson = json
-            cachedBindings = WeTypeGestureSettings.parseBindings(json)
-        }
-        return cachedBindings
+        return WeTypeGestureSettings.cachedBindings(WeTypeSettings.getGestureBindingsJsonXposed())
     }
 
     private fun accessFor(drawCtx: Any): KeyDrawAccess? {

@@ -8,6 +8,17 @@ import org.json.JSONObject
  */
 object WeTypeGestureSettings {
 
+    private data class BindingsCache(val json: String, val bindings: Map<Char, GestureAction>)
+
+    @Volatile
+    private var bindingsCache: BindingsCache? = null
+
+    /** Shared by touch handling and label drawing; publish the source and result together. */
+    fun cachedBindings(json: String): Map<Char, GestureAction> {
+        bindingsCache?.takeIf { it.json == json }?.let { return it.bindings }
+        return parseBindings(json).also { bindingsCache = BindingsCache(json, it) }
+    }
+
     fun parseBindings(json: String?): Map<Char, GestureAction> {
         if (json.isNullOrEmpty()) return GestureAction.defaultQwertyBindings
         return runCatching {

@@ -12,6 +12,17 @@ class T9KeyNumberTest {
         fun getMainText() = "!"
         fun getId() = "S1_symbol_1"
     }
+    class LetterKey {
+        fun getMainText() = "A"
+    }
+    @Test fun usesSuppliedGetterForACompatibleReceiver() {
+        val getter = LetterKey::class.java.getMethod("getMainText")
+        assertEquals('a', KeyGestureResolver.resolveKeyChar(LetterKey(), getter))
+    }
+    @Test fun fallsBackWhenSuppliedGetterBelongsToAnotherClass() {
+        val getter = LetterKey::class.java.getMethod("getMainText")
+        assertEquals('1', KeyGestureResolver.resolveKeyChar(FirstKey(), getter, isT9 = true))
+    }
     @Test fun fallsBackToIdOnlyForAnActualNumberedKey() {
         assertEquals('1', KeyGestureResolver.resolveKeyChar(FirstKey(), isT9 = true))
         assertEquals('\u0000', KeyGestureResolver.resolveKeyChar(SymbolStripKey(), isT9 = true))
