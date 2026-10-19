@@ -38,7 +38,6 @@ internal object WeTypeMiuiPhraseHooks {
         var loggedFrames = false
         var dark = false
         val textColors = WeakHashMap<android.widget.TextView, ColorStateList>()
-        val iconColors = WeakHashMap<android.widget.ImageView, ColorStateList?>()
         val contentBackgrounds = WeakHashMap<View, Pair<Drawable, Drawable>>()
     }
     private val prepared = WeakHashMap<PopupWindow, Pair<View, Drawable?>>()
@@ -288,7 +287,6 @@ internal object WeTypeMiuiPhraseHooks {
         state.hidden.forEach { (view, alpha) -> if (view.alpha == 0f) view.alpha = alpha }
         state.hidden.clear()
         state.textColors.forEach { (view, colors) -> view.setTextColor(colors) }
-        state.iconColors.forEach { (view, colors) -> view.imageTintList = colors }
         state.contentBackgrounds.forEach { (view, backgrounds) ->
             if (view.background === backgrounds.second) replaceBackground(view, backgrounds.first)
         }
@@ -306,10 +304,9 @@ internal object WeTypeMiuiPhraseHooks {
             if (view is android.widget.TextView) {
                 if (!state.textColors.containsKey(view)) state.textColors[view] = view.textColors
                 if (view.textColors.defaultColor != foreground) view.setTextColor(foreground)
-            } else if (view is android.widget.ImageView && !inList) {
-                if (!state.iconColors.containsKey(view)) state.iconColors[view] = view.imageTintList
-                if (view.imageTintList?.defaultColor != foreground) view.imageTintList = ColorStateList.valueOf(foreground)
             }
+            // MIUI button images can contain both an opaque circular plate and a glyph.
+            // Tinting the whole image erases that contrast; retain the host's image tint.
             // Tab backgrounds encode MIUI's active tab; a uniform tint erases that distinction.
             val tab = !inList && view is android.widget.TextView
             if (view !== state.inside && view !is android.widget.ImageView && !tab) {

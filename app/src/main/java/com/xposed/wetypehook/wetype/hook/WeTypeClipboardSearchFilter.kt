@@ -77,6 +77,28 @@ internal object WeTypeClipboardSearchFilter {
     private val fullItems: MutableList<Any> = ArrayList()
     private val scrollViews: MutableSet<Any> =
         Collections.newSetFromMap(WeakHashMap<Any, Boolean>())
+    private val searchFoldStates = WeakHashMap<Any, Int>()
+    private val pendingResultAlphas = WeakHashMap<View, Float>()
+
+    /** Keep layout/visibility intact for native navigation while suppressing unfiltered frames. */
+    private fun hidePendingResults(targets: List<Any>) {
+        targets.filterIsInstance<View>().forEach { view ->
+            if (!pendingResultAlphas.containsKey(view)) pendingResultAlphas[view] = view.alpha
+            view.alpha = 0f
+        }
+    }
+
+    private fun revealPendingResults(targets: List<Any>) {
+        targets.filterIsInstance<View>().forEach { view ->
+            pendingResultAlphas.remove(view)?.let { alpha -> view.alpha = alpha }
+        }
+    }
+
+    private fun releaseFailedPresentation(v: Long) {
+        mainHandler.post {
+            if (v == version.get()) revealPendingResults(pendingResultAlphas.keys.toList())
+        }
+    }
 
     // C.getType()/getContent() 反射缓存（同类加载器下同类，main/后台线程只读调用）。
     @Volatile
@@ -100,6 +122,7 @@ internal object WeTypeClipboardSearchFilter {
             executor.submit { runFilterInBackground(v, kw, snapshot, targets) }
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "debounce dispatch failed: ${t.message}")
+            releaseFailedPresentation(version.get())
         }
     }
 
@@ -141,14 +164,24 @@ internal object WeTypeClipboardSearchFilter {
                 mainHandler.removeCallbacks(debounceTask)
                 try {
                     val targets: List<Any> = synchronized(lock) { ArrayList(scrollViews) }
+                    revealPendingResults(pendingResultAlphas.keys.toList())
+                    for (target in targets) {
+                        updateSearchFoldState(target, false)
+                        invokeAdapterFullRebind(target)
+                    }
                     WeTypeClipboardSearchEmpty.onSwitchOff(targets)
                 } catch (t: Throwable) {
                     AndroidLog.e(TAG, "empty restore on switch-off failed: ${t.message}")
                 }
                 return
             }
-            currentKeyword = raw.orEmpty()
-            scheduleLocked()
+            val keyword = raw.orEmpty()
+            val unchanged = keyword == currentKeyword
+            currentKeyword = keyword
+            if (currentKeyword.isNotBlank()) {
+                hidePendingResults(synchronized(lock) { ArrayList(scrollViews) })
+            }
+            scheduleLocked(if (unchanged || keyword.isEmpty()) 0L else DEBOUNCE_MS)
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "onKeyword failed: ${t.message}")
         }
@@ -174,7 +207,10 @@ internal object WeTypeClipboardSearchFilter {
             WeTypeClipboardImageList.onNativeSetList(scrollView, list.filterNotNull())
             // 主线程调度；hookAfter 大概率已在主线程，非主则抛回主线程。
             if (Looper.myLooper() == Looper.getMainLooper()) {
-                if (runSchedule) scheduleLocked()
+                if (runSchedule) {
+                    hidePendingResults(listOf(scrollView))
+                    scheduleLocked(0L)
+                }
             } else {
                 mainHandler.post {
                     try {
@@ -182,7 +218,8 @@ internal object WeTypeClipboardSearchFilter {
                             WeTypeSettings.isClipboardSearchEnabledXposed() &&
                             !applyingFilter.get()
                         ) {
-                            scheduleLocked()
+                            hidePendingResults(listOf(scrollView))
+                            scheduleLocked(0L)
                         }
                     } catch (t: Throwable) {
                         AndroidLog.e(TAG, "native setList reschedule failed: ${t.message}")
@@ -194,13 +231,14 @@ internal object WeTypeClipboardSearchFilter {
         }
     }
 
-    private fun scheduleLocked() {
+    private fun scheduleLocked(delayMillis: Long = DEBOUNCE_MS) {
         try {
             version.incrementAndGet()
             mainHandler.removeCallbacks(debounceTask)
-            mainHandler.postDelayed(debounceTask, DEBOUNCE_MS)
+            mainHandler.postDelayed(debounceTask, delayMillis)
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "schedule filter failed: ${t.message}")
+            releaseFailedPresentation(version.get())
         }
     }
 
@@ -221,6 +259,7 @@ internal object WeTypeClipboardSearchFilter {
             mainHandler.post { applyResultOnMain(v, keyword, targets, filtered) }
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "background filter failed: ${t.message}")
+            releaseFailedPresentation(v)
         }
     }
 
@@ -287,6 +326,7 @@ internal object WeTypeClipboardSearchFilter {
                     applyingFilter.set(true)
                     invokeSetList(scrollView, filtered)
                     invokeAdapterRefresh(scrollView)
+                    updateSearchFoldState(scrollView, keyword.isNotBlank())
                     // S8：宿主 y() 只重算折叠分区并 notifyItemChanged(0)，可视区其余行
                     // 保持旧绑定（滑出屏幕回收后才重绑，表现为第 2/3 行短暂显示旧内容）。
                     // 这里补一次全量 notifyDataSetChanged 强制重绑所有行。
@@ -295,6 +335,7 @@ internal object WeTypeClipboardSearchFilter {
                     AndroidLog.e(TAG, "apply filtered list failed: ${t.message}")
                 } finally {
                     applyingFilter.set(false)
+                    revealPendingResults(listOf(scrollView))
                 }
             }
             // S6：空态（无结果文案/恢复原生）复用原生空视图链路，主线程 UI。
@@ -306,6 +347,25 @@ internal object WeTypeClipboardSearchFilter {
         } catch (t: Throwable) {
             AndroidLog.e(TAG, "applyResult failed: ${t.message}")
         }
+    }
+
+    /** Verified host v: h=1 selects the collapsed list k; z(0) selects full list b. */
+    private fun updateSearchFoldState(scrollView: Any, searching: Boolean) {
+        val adapter = resolveAdapter(scrollView) ?: return
+        if (adapter.javaClass.name != ADAPTER_CLASS) return
+        runCatching {
+            val field = adapter.javaClass.getDeclaredField("h").apply { isAccessible = true }
+            if (field.type != Int::class.javaPrimitiveType) return
+            val setter = adapter.javaClass.getDeclaredMethod("z", Int::class.javaPrimitiveType)
+                .apply { isAccessible = true }
+            if (setter.returnType != Void.TYPE) return
+            if (searching) {
+                if (!searchFoldStates.containsKey(adapter)) searchFoldStates[adapter] = field.getInt(adapter)
+                setter.invoke(adapter, 0)
+            } else {
+                searchFoldStates.remove(adapter)?.let { setter.invoke(adapter, it) }
+            }
+        }.onFailure { AndroidLog.e(TAG, "search fold state update failed: ${it.message}") }
     }
 
     private fun invokeSetList(scrollView: Any, filtered: List<Any>) {

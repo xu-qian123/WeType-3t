@@ -61,6 +61,113 @@ internal object WeTypeClipboardSearchUi {
     private var nativeSearchRestore: (() -> Unit)? = null
     private var activeImeService: java.lang.ref.WeakReference<Any>? = null
     private val searchButtonOwners = WeakHashMap<View, Boolean>()
+    private const val TAG_RESULT_SEARCH = "wetype_clipboard_result_search"
+    private val resultSearchLabels = Collections.newSetFromMap(WeakHashMap<android.widget.TextView, Boolean>())
+    private var searchPrefill: String? = null
+
+    /** Keep the query visible with results; editing reuses the verified native input route. */
+    private fun ensureResultSearchBar(list: View, root: ViewGroup) {
+        val parent = list.parent as? ViewGroup ?: return
+        val existingRow = parent.findViewWithTag<View>(TAG_RESULT_SEARCH)
+        if (existingRow != null) {
+            existingRow.visibility = View.VISIBLE
+            refreshResultSearchLabels()
+            return
+        }
+        // Preserve the host's layout contract; only wrap containers with positional-free children.
+        if (parent !is LinearLayout && parent !is android.widget.FrameLayout) return
+        val index = parent.indexOfChild(list)
+        val originalParams = list.layoutParams
+        val wrapper = LinearLayout(list.context).apply { orientation = LinearLayout.VERTICAL }
+        val row = LinearLayout(list.context).apply {
+            tag = TAG_RESULT_SEARCH
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            val pad = dpToPx(resources, 12f)
+            setPadding(pad, 0, pad, 0)
+            isClickable = true
+            isFocusable = true
+            contentDescription = "搜索剪贴板"
+            setOnClickListener { onSearchButtonClick(root) }
+        }
+        val label = android.widget.TextView(list.context).apply {
+            textSize = 15f
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            hint = "搜索剪贴板"
+            compoundDrawablePadding = dpToPx(resources, 8f)
+            resolveSearchIconRes(this, hostClassLoader ?: context.classLoader)?.let { iconRes ->
+                context.getDrawable(iconRes)?.mutate()?.let { icon ->
+                    val size = dpToPx(resources, 20f)
+                    icon.setBounds(0, 0, size, size)
+                    setCompoundDrawablesRelative(icon, null, null, null)
+                }
+            }
+            contentDescription = "修改剪贴板搜索关键词"
+            setOnClickListener { onSearchButtonClick(root) }
+        }
+        resultSearchLabels.add(label)
+        row.addView(label, LinearLayout.LayoutParams(0, dpToPx(list.resources, 44f), 1f))
+        val clear = android.widget.TextView(list.context).apply {
+            text = "×"
+            textSize = 24f
+            gravity = android.view.Gravity.CENTER
+            contentDescription = "清空剪贴板搜索"
+            setOnClickListener { pendingKeyword = ""; applyKeywordDirect("") }
+        }
+        row.addView(clear, LinearLayout.LayoutParams(dpToPx(list.resources, 44f), dpToPx(list.resources, 44f)))
+        wrapper.addView(row, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            val margin = dpToPx(list.resources, 12f)
+            setMargins(margin, dpToPx(list.resources, 6f), margin, dpToPx(list.resources, 8f))
+        })
+        parent.removeViewAt(index)
+        parent.addView(wrapper, index, originalParams)
+        val wrapContent = originalParams.height == ViewGroup.LayoutParams.WRAP_CONTENT
+        wrapper.addView(list, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            if (wrapContent) ViewGroup.LayoutParams.WRAP_CONTENT else 0,
+            if (wrapContent) 0f else 1f
+        ))
+        refreshResultSearchLabels()
+    }
+
+    private fun refreshResultSearchLabels() {
+        val keyword = WeTypeClipboardSearchFilter.currentKeywordValue()
+        resultSearchLabels.forEach { label ->
+            label.text = keyword
+            val color = resolveThemeIconColor(label)
+            label.setTextColor(color)
+            label.setHintTextColor((color and 0x00FFFFFF) or 0x99000000.toInt())
+            label.compoundDrawablesRelative[0]?.setTint((color and 0x00FFFFFF) or 0xB3000000.toInt())
+            (label.parent as? ViewGroup)?.let { row ->
+                if (row.tag == TAG_RESULT_SEARCH && label.tag != color) {
+                    val dark = color == Color.WHITE
+                    val radius = dpToPx(label.resources, 22f).toFloat()
+                    val fill = android.graphics.drawable.GradientDrawable().apply {
+                        cornerRadius = radius
+                        setColor(if (dark) 0x18FFFFFF else 0x09000000)
+                        setStroke(dpToPx(label.resources, 1f), if (dark) 0x28FFFFFF else 0x18000000)
+                    }
+                    val mask = android.graphics.drawable.GradientDrawable().apply {
+                        cornerRadius = radius
+                        setColor(Color.WHITE)
+                    }
+                    row.background = android.graphics.drawable.RippleDrawable(
+                        android.content.res.ColorStateList.valueOf(if (dark) 0x20FFFFFF else 0x14000000),
+                        fill, mask
+                    )
+                    label.tag = color
+                }
+                (row.getChildAt(1) as? android.widget.TextView)?.apply {
+                    setTextColor(color)
+                    visibility = if (keyword.isEmpty()) View.GONE else View.VISIBLE
+                }
+            }
+        }
+    }
 
     private fun ownsSearchBox(box: EditText): Boolean = translatorShellByUs &&
         nativeKEditRefF41?.get() === box && nativeKRefF41?.get()?.parent != null
@@ -2653,6 +2760,7 @@ internal object WeTypeClipboardSearchUi {
                 val root = anchor.rootView as? ViewGroup
                 if (root != null) {
                     root.findViewWithTag<View>(TAG_SEARCH_BUTTON)?.visibility = View.GONE
+                    root.findViewWithTag<View>(TAG_RESULT_SEARCH)?.visibility = View.GONE
                     clearSearchOnMain()
                     AndroidLog.i(TAG, "custom phrase tab: search UI hidden")
                 }
@@ -2693,6 +2801,7 @@ internal object WeTypeClipboardSearchUi {
             try {
                 val root = anchor.rootView as? ViewGroup
                 if (root != null) {
+                    root.findViewWithTag<View>(TAG_RESULT_SEARCH)?.visibility = View.GONE
                     root.findViewWithTag<View>(TAG_SEARCH_BOX_CONTAINER)?.let { container ->
                         // 原生插槽无手动垫高，经统一出口直接摘条。
                         removeStripCard(container)
@@ -2811,8 +2920,12 @@ internal object WeTypeClipboardSearchUi {
                         onSearchButtonClick(root)
                     }
                 }
-                if (existing.background == null) {
-                    existing.background = resolveNativeRoundBackground(backBtn, resources)
+                existing.background = resolveNativeRoundBackground(backBtn, resources)
+                (existing as? ImageView)?.let { icon ->
+                    applyHostIconTint(icon, page, ids.backBtnIvId)
+                    icon.post {
+                        if (icon.isAttachedToWindow) applyHostIconTint(icon, page, ids.backBtnIvId)
+                    }
                 }
                 applyCircularShape(existing)
                 alignSearchButton(existing, bar, backBtn, backBtnId)
@@ -2828,6 +2941,7 @@ internal object WeTypeClipboardSearchUi {
                 .onFailure { AndroidLog.e(TAG, "back clear hook failed: ${it.message}") }
             // 剪贴板页不挂行：清掉误留的行（只留按钮），不挤列表。
             removeStripInClipboard(page, root)
+            ensureResultSearchBar(clipList, root)
             // 跳回带词：直达 S5 过滤链路。
             if (pendingKeyword.isNotEmpty()) {
                 val kw = pendingKeyword
@@ -2922,6 +3036,7 @@ internal object WeTypeClipboardSearchUi {
                         AndroidLog.e(TAG, "keyword listener missing, direct apply dropped")
                     } else {
                         listener.invoke(keyword)
+                        refreshResultSearchLabels()
                         AndroidLog.i(TAG, "direct keyword applied len=${keyword.length}")
                     }
                 } catch (t: Throwable) {
@@ -3641,6 +3756,12 @@ internal object WeTypeClipboardSearchUi {
                 AndroidLog.e(TAG, "strip F41 reuse dropped: input wire failed")
                 return false
             }
+            searchPrefill?.let { keyword ->
+                searchPrefill = null
+                parts.edit.setText(keyword)
+                parts.edit.setSelection(parts.edit.text?.length ?: 0)
+                submitSession.edit(keyword)
+            }
             // C46：直点收起可观测（exit包装+Q0补记，只记账不抢原生时序；失败只diag不拦mount）。
             runCatching { wireNativeExitF41(parts) }
             runCatching { ensureCollapseHookF41(parts.k) }
@@ -4307,6 +4428,7 @@ internal object WeTypeClipboardSearchUi {
                 AndroidLog.e(TAG, "no keyboard container id, navigation dropped")
                 return
             }
+            searchPrefill = WeTypeClipboardSearchFilter.currentKeywordValue()
             pendingKeyword = ""
             overlayPending = true
             if (!navigateBackToKeyboard()) {
@@ -15467,11 +15589,10 @@ internal object WeTypeClipboardSearchUi {
                     val loc = IntArray(2)
                     runCatching { btn.getLocationOnScreen(loc) }
                     AndroidLog.i(TAG, "search button placed screen=${loc[0]},${loc[1]} tx=${btn.translationX} ty=${btn.translationY}")
-                    if (btn.background == null) {
-                        resolveNativeRoundBackground(backBtn, btn.resources)?.let { adopted ->
-                            btn.background = adopted
-                            AndroidLog.i(TAG, "search button background adopted (aligned)")
-                        }
+                    resolveNativeRoundBackground(backBtn, btn.resources)?.let { adopted ->
+                        btn.background = adopted
+                        adopted.state = btn.drawableState
+                        adopted.jumpToCurrentState()
                     }
                     adoptNativeRoundBackground(btn, backBtn)
                 } catch (t: Throwable) {
@@ -15654,6 +15775,8 @@ internal object WeTypeClipboardSearchUi {
      * 优先复制同栏返回图标的原生 tint/colorFilter，取不到再按系统深浅色回退黑白。
      */
     private fun applyHostIconTint(icon: ImageView, page: View, backBtnIvId: Int?) {
+        icon.imageTintList = null
+        icon.clearColorFilter()
         try {
             val reference = backBtnIvId?.let { page.findViewById<View>(it) } as? ImageView
             if (reference != null) {
